@@ -1,0 +1,10 @@
+undetected-chromedriver>=3.5.0
+setuptools
+selenium>=4.10.0
+psycopg2-binary
+rapidfuzz
+python-dotenv
+uvicorn
+fastapi
+webdriver-manager
+openai
