@@ -182,7 +182,7 @@ Return structured JSON strictly matching the schema with pet_information and con
             system_prompt = self.compose_system_prompt(web_context)
 
             response = self.client.chat.completions.create(
-                model="openai/gpt-oss-120b",
+                model="openai/gpt-4o-mini",
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": "Extract the attributes from the provided context."}
