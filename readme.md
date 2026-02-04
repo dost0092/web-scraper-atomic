@@ -1,4 +1,4 @@
-# 🏨 web-scraper-atomic — Hilton Hotel Scraper & Extraction Pipeline
+# web-scraper-atomic-solution — Hotel Extraction & ingestion Pipeline
 
 A modular FastAPI service and scraping toolkit for discovering Hilton hotel locations and extracting detailed hotel information (amenities, policies, addresses), with LLM-powered web context generation and structured pet-policy extraction.
 
