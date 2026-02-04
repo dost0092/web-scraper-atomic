@@ -7,7 +7,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # API Keys
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "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")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 MODEL_ID = os.getenv("MODEL_ID", "openai/gpt-oss-120b")
 
 # Database configuration
