@@ -142,7 +142,7 @@ def save_raw_extraction(url: str, raw_content: str, hash_value: str,
         sql = """
         INSERT INTO test.hotel_mapped_url (
             url, hotel_name, city, state, country, country_code,
-            raw_content_hash, created_at
+            hash, created_at
         ) VALUES (%s, %s, %s, %s, %s, %s, %s, NOW())
         ON CONFLICT (url) 
         DO UPDATE SET 
@@ -151,7 +151,7 @@ def save_raw_extraction(url: str, raw_content: str, hash_value: str,
             state = EXCLUDED.state,
             country = EXCLUDED.country,
             country_code = EXCLUDED.country_code,
-            raw_content_hash = EXCLUDED.raw_content_hash,
+            hash = EXCLUDED.hash,
             updated_at = NOW()
         RETURNING id;
         """

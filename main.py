@@ -116,7 +116,7 @@ def run_scraper_task(hotel_chain: str, country_code: Optional[str], session_id: 
         })
 
 def run_hotel_extraction_task(url: str, save_to_db: bool, extract_attributes: bool, session_id: str):
-    """Background task to run hotel extraction"""
+    """Background task to run hotel extraction using modular components"""
     try:
         logger.info(f"Starting hotel extraction: {url}, session={session_id}")
         
@@ -129,64 +129,19 @@ def run_hotel_extraction_task(url: str, save_to_db: bool, extract_attributes: bo
             'type': 'hotel_extraction'
         }
         
-        # Import here to avoid circular imports
-        try:
-            # Try to import the HotelExtractionPipeline from your code
-            # Adjust the import path based on your actual file structure
-            # If the extraction code is in hilton_location_scraper.py, you might need to:
-            from url.hilton_location_scraper import HotelExtractionPipeline
-            
+        # Import modular components
+        from context_extraction.hotel_extraction import HotelExtractionPipeline
+        from scraping.hilton_scraper import HiltonScraper
+        from llm.web_context_generator import WebContextGenerator
+        from llm.pet_attribute_extractor import PetAttributeExtractor
+        from utils.slug_generator import generate_combined_slug
+        from utils.address_parser import parse_address
+        from utils.context_hashing import generate_raw_content_hash
+        
+        if save_to_db:
+            # Use the full pipeline with database saving
             pipeline = HotelExtractionPipeline()
-            
-            if save_to_db:
-                result = pipeline.extract_hotel(url)
-            else:
-                # Run extraction without saving to DB
-                hotel_data = pipeline.scraper.extract_all_data(url)
-                prompt = pipeline.build_prompt(hotel_data)
-                web_context = pipeline.generate_web_context(prompt)
-                
-                # Parse address
-                from url.hilton_location_scraper import parse_address, generate_combined_slug, _hash_context
-                
-                address_info = parse_address(hotel_data.get('contact_info', {}).get('address', ''))
-                web_slug = generate_combined_slug(
-                    country_code=address_info.get('country_code', 'US'),
-                    state_code=address_info.get('state', ''),
-                    city=address_info.get('city', ''),
-                    hotel_name=hotel_data.get('hotel_name', ''),
-                    address_line_1=address_info.get('address_line_1', '')
-                )
-                
-                pet_attributes = {}
-                if extract_attributes:
-                    pet_attributes = pipeline.extract_pet_attributes(web_context)
-                
-                raw_content_parts = [
-                    hotel_data.get('hotel_name', ''),
-                    hotel_data.get('description', ''),
-                    hotel_data.get('contact_info', {}).get('address', ''),
-                    hotel_data.get('contact_info', {}).get('phone', ''),
-                    ', '.join(hotel_data.get('amenities', [])),
-                    str(hotel_data.get('parking_policy', {})),
-                    str(hotel_data.get('pets_policy', {})),
-                    hotel_data.get('smoking_policy', ''),
-                    hotel_data.get('wifi_policy', ''),
-                    hotel_data.get('rating', ''),
-                ]
-                raw_content = ' '.join(raw_content_parts)
-                hash_value = _hash_context(raw_content)
-                
-                result = {
-                    "status": "success",
-                    "hash": hash_value,
-                    "hotel_data": hotel_data,
-                    "address_info": address_info,
-                    "web_context": web_context,
-                    "pet_attributes": pet_attributes,
-                    "web_slug": web_slug,
-                    "url": url
-                }
+            result = pipeline.extract_hotel(url)
             
             active_scrapes[session_id].update({
                 'status': 'completed',
@@ -194,11 +149,60 @@ def run_hotel_extraction_task(url: str, save_to_db: bool, extract_attributes: bo
                 'result': result
             })
             
-            logger.info(f"Hotel extraction completed successfully: {url}")
+            logger.info(f"Hotel extraction completed and saved to database: {url}")
             
-        except ImportError as e:
-            logger.error(f"Could not import extraction pipeline: {e}")
-            raise HTTPException(status_code=501, detail="Hotel extraction not implemented")
+        else:
+            # Run extraction without saving to DB
+            # Use individual components
+            scraper = HiltonScraper(headless=False)
+            web_context_gen = WebContextGenerator()
+            pet_attr_extractor = PetAttributeExtractor()
+            
+            # Step 1: Scrape data
+            hotel_data = scraper.extract_all_data(url)
+            
+            # Step 2: Generate web context
+            web_context = web_context_gen.generate(hotel_data)
+            
+            # Step 3: Parse address
+            address_info = parse_address(hotel_data.get('contact_info', {}).get('address', ''))
+            
+            # Step 4: Generate web slug
+            web_slug = generate_combined_slug(
+                country_code=address_info.get('country_code', 'US'),
+                state_code=address_info.get('state', ''),
+                city=address_info.get('city', ''),
+                hotel_name=hotel_data.get('hotel_name', ''),
+                address_line_1=address_info.get('address_line_1', '')
+            )
+            
+            # Step 5: Extract pet attributes (if requested)
+            pet_attributes = {}
+            if extract_attributes:
+                pet_attributes = pet_attr_extractor.extract(web_context)
+            
+            # Step 6: Generate hash
+            hash_value = generate_raw_content_hash(hotel_data)
+            
+            # Prepare result
+            result = {
+                "status": "success",
+                "hash": hash_value,
+                "hotel_data": hotel_data,
+                "address_info": address_info,
+                "web_context": web_context,
+                "pet_attributes": pet_attributes,
+                "web_slug": web_slug,
+                "url": url
+            }
+            
+            active_scrapes[session_id].update({
+                'status': 'completed',
+                'completed_at': datetime.now().isoformat(),
+                'result': result
+            })
+            
+            logger.info(f"Hotel extraction completed (not saved to database): {url}")
             
     except Exception as e:
         logger.error(f"Error in hotel extraction: {e}", exc_info=True)
@@ -294,14 +298,20 @@ async def scrape_hotel_data(
             logger.info(f"Running synchronous extraction for: {request.url}")
             
             try:
-                # Try to import and run directly
-                from url.hilton_location_scraper import HotelExtractionPipeline
-                from url.hilton_location_scraper import parse_address, generate_combined_slug, _hash_context
-                
-                pipeline = HotelExtractionPipeline()
+                # Import the modular pipeline
+                from hotel_extraction.main import HotelExtractionPipeline
+                from hotel_extraction.scraping.hilton_scraper import HiltonScraper
+                from hotel_extraction.llm_processing.web_context_generator import WebContextGenerator
+                from hotel_extraction.llm_processing.pet_attribute_extractor import PetAttributeExtractor
+                from hotel_extraction.llm_processing.slug_generator import generate_combined_slug
+                from hotel_extraction.utils.address_parser import parse_address
+                from hotel_extraction.utils.context_hashing import generate_raw_content_hash
                 
                 if request.save_to_db:
+                    # Use the full pipeline with database saving
+                    pipeline = HotelExtractionPipeline()
                     result = pipeline.extract_hotel(str(request.url))
+                    
                     return HotelExtractionResponse(
                         status="success",
                         message="Hotel extraction completed and saved to database",
@@ -309,12 +319,22 @@ async def scrape_hotel_data(
                         session_id=session_id
                     )
                 else:
-                    # Run without saving to DB
-                    hotel_data = pipeline.scraper.extract_all_data(str(request.url))
-                    prompt = pipeline.build_prompt(hotel_data)
-                    web_context = pipeline.generate_web_context(prompt)
+                    # Run extraction without saving to DB
+                    # Use individual components
+                    scraper = HiltonScraper(headless=False)
+                    web_context_gen = WebContextGenerator()
+                    pet_attr_extractor = PetAttributeExtractor()
                     
+                    # Step 1: Scrape data
+                    hotel_data = scraper.extract_all_data(str(request.url))
+                    
+                    # Step 2: Generate web context
+                    web_context = web_context_gen.generate(hotel_data)
+                    
+                    # Step 3: Parse address
                     address_info = parse_address(hotel_data.get('contact_info', {}).get('address', ''))
+                    
+                    # Step 4: Generate web slug
                     web_slug = generate_combined_slug(
                         country_code=address_info.get('country_code', 'US'),
                         state_code=address_info.get('state', ''),
@@ -323,25 +343,15 @@ async def scrape_hotel_data(
                         address_line_1=address_info.get('address_line_1', '')
                     )
                     
+                    # Step 5: Extract pet attributes (if requested)
                     pet_attributes = {}
                     if request.extract_attributes:
-                        pet_attributes = pipeline.extract_pet_attributes(web_context)
+                        pet_attributes = pet_attr_extractor.extract(web_context)
                     
-                    raw_content_parts = [
-                        hotel_data.get('hotel_name', ''),
-                        hotel_data.get('description', ''),
-                        hotel_data.get('contact_info', {}).get('address', ''),
-                        hotel_data.get('contact_info', {}).get('phone', ''),
-                        ', '.join(hotel_data.get('amenities', [])),
-                        str(hotel_data.get('parking_policy', {})),
-                        str(hotel_data.get('pets_policy', {})),
-                        hotel_data.get('smoking_policy', ''),
-                        hotel_data.get('wifi_policy', ''),
-                        hotel_data.get('rating', ''),
-                    ]
-                    raw_content = ' '.join(raw_content_parts)
-                    hash_value = _hash_context(raw_content)
+                    # Step 6: Generate hash
+                    hash_value = generate_raw_content_hash(hotel_data)
                     
+                    # Prepare result
                     result = {
                         "status": "success",
                         "hash": hash_value,
@@ -355,14 +365,17 @@ async def scrape_hotel_data(
                     
                     return HotelExtractionResponse(
                         status="success",
-                        message="Hotel extraction completed",
+                        message="Hotel extraction completed (not saved to database)",
                         data=result,
                         session_id=session_id
                     )
                     
             except ImportError as e:
                 logger.error(f"Import error: {e}")
-                raise HTTPException(status_code=501, detail="Hotel extraction functionality not available")
+                raise HTTPException(
+                    status_code=501, 
+                    detail="Hotel extraction functionality not available. Check module imports."
+                )
                 
         else:
             # Run asynchronously
@@ -385,7 +398,7 @@ async def scrape_hotel_data(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error starting hotel extraction: {e}")
+        logger.error(f"Error starting hotel extraction: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/scrape/status/{session_id}")
@@ -532,4 +545,4 @@ async def extract_hotel_direct(request: HotelExtractionRequest):
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(app, port=8000)
