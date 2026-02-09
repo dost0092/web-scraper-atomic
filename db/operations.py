@@ -11,7 +11,8 @@ from db.queries import (
     WEB_CONTEXT_UPDATE,
     PET_ATTRIBUTES_UPDATE,
     WEB_SLUG_UPDATE,
-    CHECK_URL_EXISTS
+    CHECK_URL_EXISTS,
+    CHECK_URL_EXISTS_WITH_CHAIN
 )
 from utils.address_parser import parse_address
 
@@ -24,6 +25,7 @@ class HotelDatabaseOperations:
     def save_raw_extraction(
         url: str, 
         raw_content: str, 
+        chain: str,
         hash_value: str, 
         hotel_name: str = "", 
         address: str = ""
@@ -66,7 +68,26 @@ class HotelDatabaseOperations:
         except Exception as e:
             logger.error(f"Error saving web context: {e}")
             raise
-    
+
+
+    @staticmethod
+    def check_url_exists_with_chain(
+        url: str, 
+        chain: str
+    ) -> Optional[Tuple[int, str]]:
+        """Check if URL exists for a specific hotel chain"""
+        try:
+            with get_db_cursor() as cur:
+                cur.execute(CHECK_URL_EXISTS_WITH_CHAIN, (url, chain))
+                result = cur.fetchone()
+                if result:
+                    return result  # (id, hash_value)
+                return None
+        except Exception as e:
+            logger.error(f"Error checking URL + chain existence: {e}")
+            return None
+
+
     @staticmethod
     def save_pet_attributes(record_id: int, pet_attributes: Dict[str, Any]) -> None:
         """Save pet attributes as JSONB"""

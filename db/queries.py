@@ -54,3 +54,11 @@ LIMIT 1;
 """
 
 
+CHECK_URL_EXISTS_WITH_CHAIN = """
+SELECT id, chain 
+FROM test.hotel_mapped_url
+WHERE url = %s
+  AND chain =  %s
+LIMIT 1;
+"""
+

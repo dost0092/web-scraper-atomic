@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 class HiltonScraper:
     """Standalone Hilton scraper with Chrome version handling"""
     
-    def __init__(self, headless=True):
+    def __init__(self, headless=False):
         self.headless = headless
         self.driver = None
     
@@ -415,3 +415,11 @@ class HiltonScraper:
                     driver.quit()
                 except:
                     pass
+
+
+if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO)
+    scraper = HiltonScraper(headless=False)
+    url = "https://www.hilton.com/en/hotels/ancakhx-hampton-anchorage/"
+    data = scraper.extract_all_data(url)
+    print(data)

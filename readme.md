@@ -71,12 +71,12 @@ The extraction pipeline in `context_extraction/hotel_extraction.py` orchestrates
 
 ### **Step 2: Generate Content Hash**
 - **Module:** `utils/context_hashing.py`
-- **Function:** Creates SHA-256 hash of scraped content for deduplication
+- **Function:** Creates md5 hash of scraped content for deduplication
 - **Purpose:** Detects if hotel page has changed since last scrape
 
 ### **Step 3: Save Raw Extraction**
-- **Module:** `db/operations.py` → `save_raw_extraction()`
-- **Function:** Stores raw scraped data in PostgreSQL
+- **Module:** `db/operations.py` → `save_raw_hash()`
+- **Function:** Stores raw scraped data in hash form in PostgreSQL
 - **Returns:** Database record ID for subsequent steps
 
 ### **Step 4: Generate Web Context**
@@ -126,7 +126,7 @@ The extraction pipeline in `context_extraction/hotel_extraction.py` orchestrates
 
 ### **Step 8: Generate Web Slug**
 - **Module:** `context_extraction/hotel_extraction.py`
-- **Function:** Creates URL-friendly slug from hotel name (e.g., `hilton-anchorage`)
+- **Function:** Creates URL-friendly slug from hotel name (e.g., `us-ak-anchorage-hiltonanchorage-500westthirdavenue`)
 
 ### **Step 9: Update Database with Slug**
 - **Module:** `db/operations.py` → `update_web_slug()`

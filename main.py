@@ -10,6 +10,7 @@ from datetime import datetime
 from fastapi import FastAPI, BackgroundTasks, HTTPException, Query
 from pydantic import BaseModel, HttpUrl
 from dotenv import load_dotenv
+from utils.chain_detector import HotelChainDetector
 
 # Load environment variables
 load_dotenv()
@@ -66,15 +67,17 @@ class ScrapeResponse(BaseModel):
     session_id: Optional[str] = None
 
 class HotelExtractionRequest(BaseModel):
-    url: HttpUrl
+    url: str
     save_to_db: bool = True
     extract_attributes: bool = True
+    chain: Optional[str] = None  # Optional: expected chain for verification
 
 class HotelExtractionResponse(BaseModel):
     status: str
     message: str
-    data: Optional[Dict[str, Any]] = None
-    session_id: Optional[str] = None
+    session_id: str
+    chain: Optional[str] = None
+    data: Optional[dict] = None
 
 # ------------------------------------------------------------------
 # Helper Functions for Background Tasks
@@ -115,7 +118,7 @@ def run_scraper_task(hotel_chain: str, country_code: Optional[str], session_id: 
             'completed_at': datetime.now().isoformat()
         })
 
-def run_hotel_extraction_task(url: str, save_to_db: bool, extract_attributes: bool, session_id: str):
+def run_hotel_extraction_task(url: str, save_to_db: bool, extract_attributes: bool, chain: str, session_id: str):
     """Background task to run hotel extraction using modular components"""
     try:
         logger.info(f"Starting hotel extraction: {url}, session={session_id}")
@@ -141,7 +144,7 @@ def run_hotel_extraction_task(url: str, save_to_db: bool, extract_attributes: bo
         if save_to_db:
             # Use the full pipeline with database saving
             pipeline = HotelExtractionPipeline()
-            result = pipeline.extract_hotel(url)
+            result = pipeline.extract_hotel(url, chain)
             
             active_scrapes[session_id].update({
                 'status': 'completed',
@@ -159,7 +162,7 @@ def run_hotel_extraction_task(url: str, save_to_db: bool, extract_attributes: bo
             pet_attr_extractor = PetAttributeExtractor()
             
             # Step 1: Scrape data
-            hotel_data = scraper.extract_all_data(url)
+            hotel_data = scraper.extract_all_data(url, chain)
             
             # Step 2: Generate web context
             web_context = web_context_gen.generate(hotel_data)
@@ -277,12 +280,13 @@ async def scrape_hotel_data(
     synchronous: bool = Query(False, description="Run synchronously (waits for result)")
 ):
     """
-    Extract detailed hotel information from a specific URL
+    Extract detailed hotel information from any supported chain URL
     
     Parameters:
     - url: The hotel URL to scrape
     - save_to_db: Whether to save results to database (default: True)
     - extract_attributes: Whether to extract pet attributes (default: True)
+    - chain: Expected hotel chain (optional, for verification)
     - synchronous: If True, waits for completion and returns result (default: False)
     
     Returns:
@@ -293,40 +297,49 @@ async def scrape_hotel_data(
         # Generate session ID
         session_id = f"extract_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
         
+        # Detect chain from URL
+        detected_chain = HotelChainDetector.detect_chain_from_url(request.url)
+        
+        # Verify chain if expected chain provided
+        if request.chain:
+            chain_info = HotelChainDetector.verify_chain(request.url, request.chain)
+            if not chain_info["is_verified"]:
+                raise HTTPException(
+                    status_code=400,
+                    detail=chain_info["message"]
+                )
+            chain_to_use = request.chain
+        else:
+            chain_to_use = detected_chain or "unknown"
+        
+        logger.info(f"Processing {chain_to_use} hotel: {request.url}")
+        
         if synchronous:
             # Run synchronously
-            logger.info(f"Running synchronous extraction for: {request.url}")
+            logger.info(f"Running synchronous extraction for {chain_to_use}: {request.url}")
             
             try:
-                # Import the modular pipeline
-                from hotel_extraction.main import HotelExtractionPipeline
-                from hotel_extraction.scraping.hilton_scraper import HiltonScraper
-                from hotel_extraction.llm_processing.web_context_generator import WebContextGenerator
-                from hotel_extraction.llm_processing.pet_attribute_extractor import PetAttributeExtractor
-                from hotel_extraction.llm_processing.slug_generator import generate_combined_slug
-                from hotel_extraction.utils.address_parser import parse_address
-                from hotel_extraction.utils.context_hashing import generate_raw_content_hash
+                pipeline = HotelExtractionPipeline(headless=False)
                 
                 if request.save_to_db:
                     # Use the full pipeline with database saving
-                    pipeline = HotelExtractionPipeline()
-                    result = pipeline.extract_hotel(str(request.url))
+                    result = pipeline.extract_hotel(request.url, chain_to_use)
                     
                     return HotelExtractionResponse(
                         status="success",
-                        message="Hotel extraction completed and saved to database",
+                        message=f"{chain_to_use.capitalize()} hotel extraction completed",
                         data=result,
-                        session_id=session_id
+                        session_id=session_id,
+                        chain=chain_to_use
                     )
                 else:
                     # Run extraction without saving to DB
-                    # Use individual components
-                    scraper = HiltonScraper(headless=False)
+                    scraper = HotelScraperFactory.create_scraper(chain_to_use, headless=False)
                     web_context_gen = WebContextGenerator()
                     pet_attr_extractor = PetAttributeExtractor()
                     
                     # Step 1: Scrape data
-                    hotel_data = scraper.extract_all_data(str(request.url))
+                    hotel_data = scraper.extract_all_data(request.url)
                     
                     # Step 2: Generate web context
                     web_context = web_context_gen.generate(hotel_data)
@@ -340,7 +353,8 @@ async def scrape_hotel_data(
                         state_code=address_info.get('state', ''),
                         city=address_info.get('city', ''),
                         hotel_name=hotel_data.get('hotel_name', ''),
-                        address_line_1=address_info.get('address_line_1', '')
+                        address_line_1=address_info.get('address_line_1', ''),
+                        chain=chain_to_use
                     )
                     
                     # Step 5: Extract pet attributes (if requested)
@@ -360,39 +374,43 @@ async def scrape_hotel_data(
                         "web_context": web_context,
                         "pet_attributes": pet_attributes,
                         "web_slug": web_slug,
-                        "url": str(request.url)
+                        "url": request.url,
+                        "chain": chain_to_use
                     }
                     
                     return HotelExtractionResponse(
                         status="success",
-                        message="Hotel extraction completed (not saved to database)",
+                        message=f"{chain_to_use.capitalize()} hotel extraction completed (not saved to database)",
                         data=result,
-                        session_id=session_id
+                        session_id=session_id,
+                        chain=chain_to_use
                     )
                     
             except ImportError as e:
                 logger.error(f"Import error: {e}")
                 raise HTTPException(
                     status_code=501, 
-                    detail="Hotel extraction functionality not available. Check module imports."
+                    detail="Hotel extraction functionality not available."
                 )
                 
         else:
             # Run asynchronously
-            logger.info(f"Queuing hotel extraction: {request.url}")
+            logger.info(f"Queuing hotel extraction for {chain_to_use}: {request.url}")
             
             background_tasks.add_task(
                 run_hotel_extraction_task,
-                str(request.url),
+                request.url,
                 request.save_to_db,
                 request.extract_attributes,
+                chain_to_use,
                 session_id
             )
             
             return HotelExtractionResponse(
                 status="queued",
-                message="Hotel extraction job queued",
-                session_id=session_id
+                message=f"Hotel extraction job queued for {chain_to_use}",
+                session_id=session_id,
+                chain=chain_to_use
             )
             
     except HTTPException:
