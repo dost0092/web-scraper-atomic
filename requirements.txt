@@ -27,3 +27,5 @@ pytest-asyncio>=0.21.0
 httpx>=0.25.0
 
 google-genai
+
+seleniumbase

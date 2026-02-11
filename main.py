@@ -157,7 +157,7 @@ def run_hotel_extraction_task(url: str, save_to_db: bool, extract_attributes: bo
         else:
             # Run extraction without saving to DB
             # Use individual components
-            scraper = HiltonScraper(headless=False)
+            scraper = HiltonScraper(headless=True)
             web_context_gen = WebContextGenerator()
             pet_attr_extractor = PetAttributeExtractor()
             
@@ -319,7 +319,7 @@ async def scrape_hotel_data(
             logger.info(f"Running synchronous extraction for {chain_to_use}: {request.url}")
             
             try:
-                pipeline = HotelExtractionPipeline(headless=False)
+                pipeline = HotelExtractionPipeline(headless=True)
                 
                 if request.save_to_db:
                     # Use the full pipeline with database saving
@@ -334,7 +334,7 @@ async def scrape_hotel_data(
                     )
                 else:
                     # Run extraction without saving to DB
-                    scraper = HotelScraperFactory.create_scraper(chain_to_use, headless=False)
+                    scraper = HotelScraperFactory.create_scraper(chain_to_use, headless=True)
                     web_context_gen = WebContextGenerator()
                     pet_attr_extractor = PetAttributeExtractor()
                     
